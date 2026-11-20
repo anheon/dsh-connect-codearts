@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-connect-codearts",
+    "description": "Huawei Cloud CodeArts Doer provider for DeepSeek Harness. Talks to the CodeArts gateway directly with IAM long-lived AK/SK and Huawei Cloud APIG SDK-HMAC-SHA256 request signing — no desktop client, no OAuth flow, no token refresh. Discovers the live model catalog with real context windows and output ceilings, shows per-model credit multipliers, reads the credit balance, and surfaces the daily check-in campaign."
+  }
+}

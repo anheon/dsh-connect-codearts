@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-connect-codearts",
+    "description": "把华为云码道（CodeArts Doer）接进 DeepSeek Harness。用 IAM 长期 AK/SK 直连码道网关，请求走华为云 APIG 的 SDK-HMAC-SHA256 签名 —— 不需要桌面客户端、不走 OAuth、不做 token 刷新。实时拉取模型目录（带真实上下文窗口与输出上限）、显示每个模型的积分倍率、读取积分余额，并展示每日签到活动。"
+  }
+}

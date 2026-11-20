@@ -1,0 +1,7 @@
+# Register the 码道 (CodeArts Agent) provider without changing the profile's
+# default model. The plugin talks to the Huawei Cloud APIG gateway directly
+# using the IAM AK/SK from CODEARTS_CLI_AK / CODEARTS_CLI_SK; no OAuth flow and
+# no local client process are required.
+- insert:
+    - id: dsh-connect-codearts
+      name: dsh-connect-codearts

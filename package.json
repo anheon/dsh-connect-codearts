@@ -1,0 +1,144 @@
+{
+  "name": "dsh-connect-codearts",
+  "displayName": "DSH Connect 码道",
+  "description": "把华为云码道（CodeArts Doer）的模型接入 DeepSeek Harness：用 IAM 长期 AK/SK 直连网关，请求走华为云 APIG 的 SDK-HMAC-SHA256 签名，不需要桌面客户端、不走 OAuth、不做 token 刷新。实时读取模型目录（带真实上下文窗口与输出上限）、每个模型的积分倍率、积分余额与每日签到活动。",
+  "version": "0.1.3",
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "codearts",
+    "huaweicloud",
+    "madao",
+    "model-provider",
+    "credits",
+    "dsh",
+    "plugin"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0",
+    "dsh": ">=0.2.2-rc.5 <0.2.3-0"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "bin": {
+    "dsh-connect-codearts": "lib/bin.js"
+  },
+  "icon": "icons/dsh-connect-codearts-128.png",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "icons",
+    "locale",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "THIRD_PARTY_NOTICES.md",
+    "LICENSE",
+    "INSTALL.md",
+    "FAQ.md",
+    "PRIVACY.md",
+    "DESIGN.md",
+    "PROTOCOL.md"
+  ],
+  "scripts": {
+    "build": "tsdown && node scripts/verify-entry-artifacts.mjs && node scripts/smoke-client.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.client.json",
+    "check:pii": "node scripts/check-pii.mjs",
+    "check": "npm run typecheck && npm run build && npm run check:pii && npm run test",
+    "prepack": "npm run check",
+    "smoke:client": "node scripts/smoke-client.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1-rc.1 <5.0.0",
+    "@deepseek-ai/dsh-client-locale": ">=0.2.2-rc.3 <0.3.0-0",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.2.2-rc.3 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.2.2-rc.3 <0.3.0-0",
+    "@deepseek-ai/dsh-settings": ">=0.2.2-rc.3 <0.3.0-0",
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-locale": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-slots": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-settings": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": ">=3.18.1-rc.1 <4.0.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.1.0",
+    "@deepseek-ai/dsh-atomic-write": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-attachment": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-brand": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-locale": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-error": "^0.2.2-rc.2",
+    "@deepseek-ai/dsh-home-paths": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-llm": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-settings": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-timeout": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-typert-protocol": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-util-crypto": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-util-values": "^0.2.2-rc.3",
+    "@types/node": "^22.20.0",
+    "@types/react": "~18.3.31",
+    "@types/react-dom": "18.3.7",
+    "react": "^18.3.1",
+    "react-dom": "18.3.1",
+    "tsdown": "^0.22.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anheon/dsh-connect-codearts.git"
+  },
+  "homepage": "https://github.com/anheon/dsh-connect-codearts#readme",
+  "bugs": {
+    "url": "https://github.com/anheon/dsh-connect-codearts/issues"
+  },
+  "author": "dsh-connect-codearts contributors",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  }
+}

@@ -1,0 +1,38 @@
+# 构建产物：`lib/` 随 npm 包发布，但**不进仓库**。
+# 理由：它是生成物，提交进去就会出现「改源码忘了重构建，仓库里跑的还是旧代码」
+# 这种最难查的状态。进 tarball 靠 `files` 白名单，与 git 无关。
+lib/
+*.tsbuildinfo
+
+# 依赖
+node_modules/
+
+# 探针脚本的产物：这些文件里可能带真实响应，绝不能进仓库或发布包。
+# `probe/` 目录本身要保留 —— 它是 M0 实测的复现脚本，有复现价值；
+# 但它跑出来的落盘结果一律忽略。
+probe/*.json
+probe/*.log
+probe/out/
+*.chat.log
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# npm 打包中间产物
+*.tgz
+
+# 本地凭据（本项目不写凭据文件，但防止有人手测时留下）
+.codearts-credentials.json
+credentials*.csv
+*.enc
+
+# 本机状态、账号配置和发布凭据
+.codearts-state.json
+.npmrc
+.env
+.env.*
+npm-debug.log*
