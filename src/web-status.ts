@@ -29,8 +29,8 @@ import type { Context } from '@deepseek-ai/cordis'
 
 import { maskAccessKey } from './credentials.ts'
 import type { CodeArtsCredentialKey } from './credentials.ts'
-import { CODEARTS_WRITE_REQUEST_HEADER } from './protocol/types.ts'
-import type { PreferencesPatch, PreferencesSnapshot } from './protocol/types.ts'
+import { CODEARTS_POLL_INTERVALS_MS, CODEARTS_SETTINGS_PATH, CODEARTS_WRITE_REQUEST_HEADER } from './protocol/types.ts'
+import type { PreferencesPatch, PreferencesSnapshot, QuickSettings, SettingsSnapshot } from './protocol/types.ts'
 import type { CreditInfo, AccountInfo, ModelCatalogEntry, WelfareItem } from './upstream.ts'
 
 /** 状态路由的绝对路径。客户端按同样的常量拼 URL。 */
@@ -47,25 +47,6 @@ export const CODEARTS_WELFARE_CLAIM_PATH = '/plugins/dsh-connect-codearts/welfar
  * 这类纯客户端选择只能由插件自己落盘，再由这条路由代写。
  */
 export const CODEARTS_PREFERENCES_PATH = '/plugins/dsh-connect-codearts/preferences'
-
-/**
- * 插件配置的生效值（客户端只读，写入走宿主的设置服务）。
- *
- * 只报客户端真正需要的字段：把整个 `Config` 原样吐出去会把将来的内部字段
- * 也锁进这条路由的契约里。
- */
-export interface SettingsSnapshot {
-  /** 是否启用 provider。关了之后整个插件不注册 adapter。 */
-  readonly enabled: boolean
-  /** 输入框旁是否显示积分胶囊。**这是 `showCredits` 的唯一消费点。** */
-  readonly showCredits: boolean
-  /** 目录与积分的自动刷新间隔（毫秒）。 */
-  readonly pollIntervalMs: number
-  /** 自定义网关地址；空串表示用官方地址。 */
-  readonly gateway: string
-  /** 每模型的默认思考档位。 */
-  readonly defaultEfforts: Readonly<Record<string, string>>
-}
 
 /** 福利列表快照。 */
 export interface WelfareSnapshot {
@@ -340,7 +321,7 @@ export const registerStatusRoute = (ctx: Context, deps: StatusRouteDeps): (() =>
          *
          * 与 `settings` 并列而不是合并：`settings` 是宿主 Config 的生效值，
          * 改它要动 profile 的 patch yaml；这个是我们自己状态文件里的东西，
-         * 改它只碰 `$DSH_HOME/.codearts-state.json`。界面上前者只读、后者可改。
+         * 改它只碰 `$DSH_HOME/.codearts-state.json`。两条写路由分别保存。
          */
         preferences: (await deps.preferences?.()) ?? null,
         /**
@@ -353,11 +334,70 @@ export const registerStatusRoute = (ctx: Context, deps: StatusRouteDeps): (() =>
   })
 }
 
-/**
- * 挂载偏好写入口。
- *
- * 保存模型可见性和自动签到偏好。使用与领取路由相同的会话及来源校验。
- */
+/** 保存当前 profile 的快捷配置，复用同源写请求校验。 */
+export const registerSettingsRoute = (
+  ctx: Context,
+  deps: {
+    authorize: RouteAuthorization
+    save: (values: QuickSettings, revision: number) => Promise<SettingsSnapshot>
+  },
+): (() => void) => {
+  const webServer = webServerOf(ctx)
+  if (webServer === undefined) return () => undefined
+
+  return webServer.register({
+    kind: 'exact',
+    path: CODEARTS_SETTINGS_PATH,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: 'method not allowed' })
+        return
+      }
+      const rejected = authorizeWrite(req, webServer, deps.authorize)
+      if (rejected !== undefined) {
+        sendJson(res, rejected, { ok: false, error: rejectionMessage(rejected) })
+        return
+      }
+
+      let body: unknown
+      try {
+        body = JSON.parse(await readBody(req))
+      } catch {
+        sendJson(res, 400, { ok: false, error: '无法读取快捷设置' })
+        return
+      }
+      if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+        sendJson(res, 400, { ok: false, error: '快捷设置必须是对象' })
+        return
+      }
+      const { revision, showCredits, pollIntervalMs, defaultEfforts } = body as Record<string, unknown>
+      if (
+        typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0 ||
+        typeof showCredits !== 'boolean' ||
+        typeof pollIntervalMs !== 'number' || !CODEARTS_POLL_INTERVALS_MS.some((ms) => ms === pollIntervalMs) ||
+        defaultEfforts === null || typeof defaultEfforts !== 'object' || Array.isArray(defaultEfforts) ||
+        !Object.entries(defaultEfforts).every(([id, effort]) => id !== '' && typeof effort === 'string' && effort !== '')
+      ) {
+        sendJson(res, 400, { ok: false, error: '快捷设置的版本、刷新间隔或思考档位无效' })
+        return
+      }
+
+      try {
+        const settings = await deps.save({
+          showCredits,
+          pollIntervalMs,
+          defaultEfforts: defaultEfforts as Record<string, string>,
+        }, revision)
+        sendJson(res, 200, { ok: true, settings })
+      } catch (error) {
+        const conflict = error instanceof Error && 'code' in error && error.code === 'SETTINGS_CONFLICT'
+        sendJson(res, conflict ? 409 : 500, { ok: false, error: '无法保存快捷设置' })
+      }
+    },
+  })
+}
+
+/** 保存模型可见性和自动签到偏好。 */
 export const registerPreferencesRoute = (
   ctx: Context,
   deps: Pick<StatusRouteDeps, 'authorize' | 'savePreferences'>,

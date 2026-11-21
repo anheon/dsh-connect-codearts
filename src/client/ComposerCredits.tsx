@@ -11,6 +11,7 @@
  * @module dsh-connect-codearts/client/ComposerCredits
  */
 import { useEffect, useState } from 'react'
+import { CODEARTS_SETTINGS_CHANGED } from '../protocol/types.ts'
 
 import type { CodeArtsCardInjected } from './CodeArtsCard.tsx'
 
@@ -45,11 +46,10 @@ const read = async (): Promise<ChipReading> => {
     if (!response.ok) return { state: 'error' }
     const payload = (await response.json()) as {
       credential: { signedIn: boolean }
-      credit: { remain: number } | null
+      credit: { remain?: number } | null
       settings?: { showCredits?: boolean } | null
-    preferences?: { checkedInToday?: boolean } | null
+      preferences?: { checkedInToday?: boolean } | null
     }
-    if (!payload.credential.signedIn) return { state: 'error' }
     // `settings` 是 0.1.2 起才有的段；旧宿主返回 null，按「没拿到」处理。
     const showCredits =
       payload.settings === null || payload.settings === undefined
@@ -59,8 +59,10 @@ const read = async (): Promise<ChipReading> => {
       payload.preferences === null || payload.preferences === undefined
         ? undefined
         : payload.preferences.checkedInToday === true
-    if (payload.credit === null) return { state: 'loading', showCredits, checkedInToday }
-    return { state: 'ready', remain: payload.credit.remain, showCredits, checkedInToday }
+    if (!payload.credential.signedIn) return { state: 'error', showCredits }
+    const remain = payload.credit?.remain
+    if (remain === undefined) return { state: 'loading', showCredits, checkedInToday }
+    return { state: 'ready', remain, showCredits, checkedInToday }
   } catch {
     return { state: 'error' }
   }
@@ -81,18 +83,24 @@ export const ComposerCredits = ({ t }: CodeArtsCardInjected): React.ReactElement
 
   useEffect(() => {
     let cancelled = false
+    let latestRequest = 0
 
     const tick = (): void => {
+      const request = ++latestRequest
       void read().then((next) => {
-        if (!cancelled) setReading(next)
+        if (!cancelled && request === latestRequest) {
+          setReading((current) => ({ ...next, showCredits: next.showCredits ?? current.showCredits }))
+        }
       })
     }
 
     tick()
     const timer = setInterval(tick, POLL_MS)
+    window.addEventListener(CODEARTS_SETTINGS_CHANGED, tick)
     return () => {
       cancelled = true
       clearInterval(timer)
+      window.removeEventListener(CODEARTS_SETTINGS_CHANGED, tick)
     }
   }, [])
 

@@ -71,7 +71,7 @@ const runStatus = async (): Promise<number> => {
     if (credit === undefined) {
       console.log('积分        接口没有返回积分字段（可能是 Token 计费账号）')
     } else {
-      console.log(`积分        ${credit.remain} 可用 / ${credit.total} 总额`)
+      console.log(`积分        ${credit.remain ?? '未知'} 可用 / ${credit.total ?? '未知'} 总额`)
       if (credit.expiringAmount !== undefined && credit.expiringAmount > 0) {
         console.log(`            其中 ${credit.expiringAmount} 即将到期`)
       }
@@ -192,7 +192,7 @@ const runDoctor = async (): Promise<number> => {
     if (credit === undefined) {
       console.log('   - 接口没有返回积分字段（Token 计费账号可能如此），不影响对话')
     } else {
-      console.log(`   ✓ ${credit.remain} 可用 / ${credit.total} 总额`)
+      console.log(`   ✓ ${credit.remain ?? '未知'} 可用 / ${credit.total ?? '未知'} 总额`)
       if (credit.remain === 0) {
         console.log('     余额为 0，对话会被拒绝。到控制台做每日签到或购买套餐。')
       }

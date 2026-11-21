@@ -69,6 +69,33 @@ describe('upstream stream termination', () => {
   })
 })
 
+describe('credit metrics', () => {
+  it('uses upstream aggregate figures without summing the constituent packages', async () => {
+    const client = new CodeArtsUpstreamClient({
+      fetchImpl: async () => Response.json({
+        metrics: [
+          { name: 'usageTotalPackageCredit', package_credit_amount: 700, package_credit_remain: 460.25,
+            package_credit_used: 239.75, package_credit_expiring_amount: 100 },
+          { name: 'usageBasicPackageCredit', value: { package_credit_remain: 160.25 } },
+          { name: 'usageBonusPackageCredit', package_credit_remain: 300 },
+        ],
+      }),
+    })
+    await expect(client.credit(credentials)).resolves.toEqual({
+      total: 700, used: 239.75, remain: 460.25, expiringAmount: 100, basic: 160.25, bonus: 300,
+    })
+  })
+
+  it('preserves a reported zero and leaves missing aggregate fields absent', async () => {
+    const client = new CodeArtsUpstreamClient({
+      fetchImpl: async () => Response.json({
+        metrics: [{ name: 'usageTotalPackageCredit', value: { package_credit_remain: 0 } }],
+      }),
+    })
+    await expect(client.credit(credentials)).resolves.toEqual({ remain: 0 })
+  })
+})
+
 describe('welfare delivery', () => {
   it('passes through the account-specific registration reward and claim status', async () => {
     const item = {
