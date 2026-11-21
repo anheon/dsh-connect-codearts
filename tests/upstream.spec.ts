@@ -68,3 +68,29 @@ describe('upstream stream termination', () => {
     })
   })
 })
+
+describe('welfare delivery', () => {
+  it('passes through the account-specific registration reward and claim status', async () => {
+    const item = {
+      campaignId: 92,
+      title: '新用户注册奖励',
+      type: 'NEW_USER_REGISTER',
+      status: 'CLAIMED',
+      claimable: false,
+      benefitAmount: 4000,
+      benefitUnit: 'CREDIT',
+    }
+    const client = new CodeArtsUpstreamClient({
+      fetchImpl: async () => Response.json({ code: 0, data: { items: [item] } }),
+    })
+    await expect(client.welfareItems(credentials)).resolves.toEqual([item])
+  })
+
+  it.each([
+    [{ code: 40001, message: '暂时无法查询' }, '40001'],
+    [{ code: 0, data: {} }, 'items'],
+  ])('rejects an invalid HTTP 200 welfare response (%o)', async (payload, message) => {
+    const client = new CodeArtsUpstreamClient({ fetchImpl: async () => Response.json(payload) })
+    await expect(client.welfareItems(credentials)).rejects.toThrow(message)
+  })
+})

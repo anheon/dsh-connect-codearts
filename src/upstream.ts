@@ -441,8 +441,13 @@ export class CodeArtsUpstreamClient {
       agentType: 'PromptCenter',
       ...(signal === undefined ? {} : { signal }),
     })
-    const data = readRecord(payload, 'data')
-    const items = readArray(data, 'items')
+    const record = asRecord(payload)
+    const code = record?.['code']
+    if (record?.['error_code'] || record?.['error'] || (code !== undefined && code !== null && code !== 0 && code !== '0')) {
+      throw requestError(classifyError(200, JSON.stringify(payload)))
+    }
+    const items = readRecord(record, 'data')?.['items']
+    if (!Array.isArray(items)) throw new Error('码道福利响应缺少 items 数组。')
     const result: WelfareItem[] = []
     for (const raw of items) {
       const record = asRecord(raw)

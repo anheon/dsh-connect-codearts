@@ -4,9 +4,9 @@
 
 ## 安装
 
-npm 版本公开后，在 DSH 桌面端的「设置 → 插件管理 → 添加插件」中输入 `dsh-connect-codearts`。也可以离线选择下载的 `.tgz` 文件。DSH 插件和独立 CLI 的安装步骤见 [安装指南](INSTALL.md)。
+在 DSH 桌面端的「设置 → 插件管理 → 添加插件」中输入 `dsh-connect-codearts`。也可以离线选择下载的 `.tgz` 文件。DSH 插件和独立 CLI 的安装步骤见 [安装指南](INSTALL.md)。
 
-0.1.3 面向 DSH 0.2.2，最低版本为 0.2.2-rc.5。独立 CLI 需要 Node.js 22.19 或更新版本。
+0.1.4 面向 DSH 0.2.2，最低版本为 0.2.2-rc.5。独立 CLI 需要 Node.js 22.19 或更新版本。
 
 ## 配置与使用
 
