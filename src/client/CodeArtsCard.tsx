@@ -16,8 +16,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import React from 'react'
 
-import { CODEARTS_WRITE_REQUEST_HEADER } from '../protocol/types.ts'
-import type { PreferencesPatch, PreferencesSnapshot } from '../protocol/types.ts'
+import { CODEARTS_CHECKIN_CAMPAIGN_TYPE, CODEARTS_SETTINGS_CHANGED, CODEARTS_WRITE_REQUEST_HEADER } from '../protocol/types.ts'
+import type { PreferencesPatch, PreferencesSnapshot, SettingsSnapshot } from '../protocol/types.ts'
+import { SettingsSection } from './SettingsSection.tsx'
 
 /** 面板拿到的注入。`t` 来自 `ctx.locale.bind(ns)`。 */
 export interface CodeArtsCardInjected {
@@ -54,15 +55,15 @@ interface StatusPayload {
     roles: string[]
   } | null
   credit: {
-    total: number
-    used: number
-    remain: number
+    total?: number
+    used?: number
+    remain?: number
     expiringAmount?: number
   } | null
   /**
    * 配置的生效值。旧版宿主没有这一段（`null`），界面要能容忍。
    */
-  settings?: SettingsPayload | null
+  settings?: SettingsSnapshot | null
   /**
    * 签到/福利列表。`items` 为空且 `error` 非 null 表示拉取失败。
    */
@@ -71,14 +72,6 @@ interface StatusPayload {
    * 本机偏好：模型隐藏表 + 签到记录。旧版宿主没有这一段（`null`）。
    */
   preferences?: PreferencesSnapshot | null
-}
-
-interface SettingsPayload {
-  enabled: boolean
-  showCredits: boolean
-  pollIntervalMs: number
-  gateway: string
-  defaultEfforts: Record<string, string>
 }
 
 interface WelfareItemPayload {
@@ -159,8 +152,8 @@ const claimWelfareItem = async (
   }
 }
 
-const formatNumber = (value: number): string =>
-  Number.isFinite(value) ? value.toLocaleString('zh-CN') : '—'
+const formatNumber = (value: number | undefined): string =>
+  typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('zh-CN') : '—'
 
 const formatContext = (tokens: number): string => {
   if (!Number.isFinite(tokens) || tokens <= 0) return '—'
@@ -189,14 +182,16 @@ const fetchStatus = async (refresh: boolean): Promise<StatusPayload | undefined>
 }
 
 /** 账号页签。 */
-const AccountTab = ({
+export const AccountTab = ({
   status,
   t,
   onRefresh,
+  onSettingsSaved,
 }: {
   status: StatusPayload | undefined
   t: CodeArtsCardInjected['t']
   onRefresh: () => void
+  onSettingsSaved: (settings: SettingsSnapshot) => void
 }): React.ReactElement => {
   if (status === undefined) {
     return <div className="dsc-dim">{t('account.refreshing')}</div>
@@ -272,84 +267,25 @@ const AccountTab = ({
       {status.credit !== null && (
         <div className="dsc-section">
           <div className="dsc-section-title">{t('account.credit')}</div>
-          <div className="dsc-row">
-            <span className="dsc-label">{t('account.creditRemain')}</span>
-            <span className="dsc-value">
-              <strong>{formatNumber(status.credit.remain)}</strong>
-              <span className="dsc-dim"> / {formatNumber(status.credit.total)} {t('account.creditTotal')}</span>
-            </span>
-          </div>
-          {status.credit.expiringAmount !== undefined && status.credit.expiringAmount > 0 && (
-            <div className="dsc-row">
-              <span className="dsc-label">{t('account.creditExpiring')}</span>
+          {([
+            ['account.creditRemain', status.credit.remain],
+            ['account.creditTotal', status.credit.total],
+            ['account.creditUsed', status.credit.used],
+            ['account.creditExpiring', status.credit.expiringAmount],
+          ] as const).map(([label, amount]) => (
+            <div className="dsc-row" key={label}>
+              <span className="dsc-label">{t(label)}</span>
               <span className="dsc-value">
-                <span className="dsc-pill warn">{formatNumber(status.credit.expiringAmount)}</span>
+                {label === 'account.creditRemain' ? <strong>{formatNumber(amount)}</strong> : formatNumber(amount)}
               </span>
             </div>
-          )}
+          ))}
+          <div className="dsc-hint dsc-dim">{t('account.creditSource')}</div>
         </div>
       )}
 
-      <SettingsSection settings={status.settings} t={t} />
+      <SettingsSection settings={status.settings} models={status.catalog.models} t={t} onSaved={onSettingsSaved} />
     </>
-  )
-}
-
-/**
- * 配置的当前生效值。
- *
- * 刻意做成**只读展示**而不是可编辑控件：写入要走宿主的 `settings` 服务
- * （`settings.update(ns, patch)`），而本轮没有把那个能力接进卡片。做成可编辑
- * 却写不进去，比只读更糟 —— 用户会以为保存了。
- *
- * 显示出来的价值：这五个字段以前只能手改 `cordis.patch.yml`，改完还得重启。
- * 至少现在能看见「现在到底是开着还是关着」，出问题时不必翻文件。
- */
-const SettingsSection = ({
-  settings,
-  t,
-}: {
-  settings: SettingsPayload | null | undefined
-  t: CodeArtsCardInjected['t']
-}): React.ReactElement | null => {
-  // 旧版宿主不带这一段。显示「此版本宿主不支持」比显示一片空白诚实。
-  if (settings === null || settings === undefined) return null
-
-  const effortEntries = Object.entries(settings.defaultEfforts)
-
-  return (
-    <div className="dsc-section">
-      <div className="dsc-section-title">{t('settings.title')}</div>
-      <div className="dsc-row">
-        <span className="dsc-label">{t('settings.enabled')}</span>
-        <span className="dsc-value">{settings.enabled ? t('common.yes') : t('common.no')}</span>
-      </div>
-      <div className="dsc-row">
-        <span className="dsc-label">{t('settings.showCredits')}</span>
-        <span className="dsc-value">{settings.showCredits ? t('common.yes') : t('common.no')}</span>
-      </div>
-      <div className="dsc-row">
-        <span className="dsc-label">{t('settings.pollInterval')}</span>
-        <span className="dsc-value">
-          {Math.round(settings.pollIntervalMs / 60_000)} {t('settings.minutes')}
-        </span>
-      </div>
-      <div className="dsc-row">
-        <span className="dsc-label">{t('settings.gateway')}</span>
-        <span className="dsc-value dsc-mono dsc-dim">
-          {settings.gateway === '' ? t('settings.gatewayDefault') : settings.gateway}
-        </span>
-      </div>
-      {effortEntries.length > 0 && (
-        <div className="dsc-row">
-          <span className="dsc-label">{t('settings.defaultEfforts')}</span>
-          <span className="dsc-value dsc-mono dsc-dim">
-            {effortEntries.map(([model, effort]) => `${model}=${effort}`).join(', ')}
-          </span>
-        </div>
-      )}
-      <div className="dsc-hint dsc-dim">{t('settings.hint')}</div>
-    </div>
   )
 }
 
@@ -365,7 +301,7 @@ const SettingsSection = ({
  *     `campaignId` 是 34，但那是华为当时的值，写死会在他们调整后静默失效。
  *     `type: 'USER_LOGIN'` 才是语义标识。
  */
-const WelfareTab = ({
+export const WelfareTab = ({
   status,
   t,
   busy,
@@ -387,14 +323,15 @@ const WelfareTab = ({
   autoCheckinError: string | undefined
 }): React.ReactElement => {
   if (status === undefined) {
-    return <div className="dsc-dim">{t('account.refreshing')}</div>
+    return <div className="dsc-dim">{t(busy ? 'account.refreshing' : 'welfare.statusUnknown')}</div>
   }
 
   const welfare = status.welfare
+  const fresh = welfare?.error === null
   const autoCheckin = status.preferences?.autoCheckin
   // 每日签到排最前：它是唯一每天都要看一眼的项。
   const items = [...(welfare?.items ?? [])].sort((left, right) => {
-    const rank = (item: WelfareItemPayload): number => (item.type === 'USER_LOGIN' ? 0 : 1)
+    const rank = (item: WelfareItemPayload): number => (item.type === CODEARTS_CHECKIN_CAMPAIGN_TYPE ? 0 : 1)
     return rank(left) - rank(right)
   })
 
@@ -423,41 +360,47 @@ const WelfareTab = ({
       {items.length === 0 && welfare?.error === null && (
         <div className="dsc-dim">{t('welfare.empty')}</div>
       )}
-      {items.map((item) => (
-        <div key={item.campaignId} className="dsc-row">
-          <span className="dsc-label">{item.title}</span>
-          <span className="dsc-value">
-            {item.benefitAmount !== undefined && (
-              <span className="dsc-dim" style={{ marginRight: 6 }}>
-                {formatNumber(item.benefitAmount)} {item.benefitUnit ?? t('welfare.credit')}
-              </span>
-            )}
-            {item.claimable ? (
-              <span className="dsc-pill accent">{t('welfare.claimable')}</span>
-            ) : (
-              <span className="dsc-pill">
-                {item.status === 'CONFIRMED'
-                  ? t('welfare.claimed')
-                  : t('welfare.notClaimable')}
-              </span>
-            )}
-          </span>
-          <span>
-            {item.claimable && (
-              <button
-                type="button"
-                className="dsc-btn"
-                disabled={claimBusy !== undefined || busy}
-                onClick={() => {
-                  onClaim(item.campaignId)
-                }}
-              >
-                {claimBusy === item.campaignId ? t('welfare.claiming') : t('welfare.claim')}
-              </button>
-            )}
-          </span>
-        </div>
-      ))}
+
+      {items.map((item) => {
+        const daily = item.type === CODEARTS_CHECKIN_CAMPAIGN_TYPE
+        const claimed = item.status === 'CLAIMED' || item.status === 'CONFIRMED' || item.status === 'CONSUMED'
+        const canClaim = fresh && !claimed && item.claimable
+        let badge = 'welfare.statusUnknown'
+        if (fresh) {
+          if (claimed) badge = daily ? 'welfare.checkedInToday' : 'welfare.claimed'
+          else if (!daily) badge = canClaim ? 'welfare.claimable' : 'welfare.notClaimable'
+          else if (canClaim || item.status === 'ELIGIBLE') badge = 'welfare.notCheckedInToday'
+        }
+        const unit = item.benefitUnit == null || item.benefitUnit === 'CREDIT'
+          ? t('welfare.credit')
+          : item.benefitUnit
+
+        return (
+          <div key={item.campaignId} className="dsc-row">
+            <span className="dsc-label">{item.title}</span>
+            <span className="dsc-value">
+              {item.benefitAmount !== undefined && (
+                <span className="dsc-dim" style={{ marginRight: 6 }}>
+                  {formatNumber(item.benefitAmount)} {unit}
+                </span>
+              )}
+              <span className={canClaim ? 'dsc-pill accent' : 'dsc-pill'}>{t(badge)}</span>
+            </span>
+            <span>
+              {canClaim && (
+                <button
+                  type="button"
+                  className="dsc-btn"
+                  disabled={claimBusy !== undefined || busy}
+                  onClick={() => onClaim(item.campaignId)}
+                >
+                  {claimBusy === item.campaignId ? t('welfare.claiming') : t('welfare.claim')}
+                </button>
+              )}
+            </span>
+          </div>
+        )
+      })}
       {claimMessage !== undefined && (
         <div className={`dsc-hint ${claimMessage.ok ? '' : 'dsc-fail'}`}>
           {claimMessage.text}
@@ -703,13 +646,19 @@ export const CodeArtsCard = ({ t }: CodeArtsCardProps): React.ReactElement => {
   const [autoCheckinSaving, setAutoCheckinSaving] = useState(false)
   const [autoCheckinError, setAutoCheckinError] = useState<string>()
   const autoCheckinRevision = useRef(0)
+  const statusRevision = useRef(0)
 
   const load = useCallback((refresh: boolean): void => {
     const revision = autoCheckinRevision.current
+    const request = ++statusRevision.current
     setBusy(true)
     void fetchStatus(refresh)
       .then((next) => {
-        if (next === undefined) return
+        if (request !== statusRevision.current) return
+        if (next === undefined) {
+          setStatus((current) => current?.welfare == null ? current : { ...current, welfare: null })
+          return
+        }
         setStatus((current) => {
           if (revision === autoCheckinRevision.current || current?.preferences == null || next.preferences == null) {
             return next
@@ -719,7 +668,7 @@ export const CodeArtsCard = ({ t }: CodeArtsCardProps): React.ReactElement => {
         })
       })
       .finally(() => {
-        setBusy(false)
+        if (request === statusRevision.current) setBusy(false)
       })
   }, [])
 
@@ -776,7 +725,7 @@ export const CodeArtsCard = ({ t }: CodeArtsCardProps): React.ReactElement => {
         .then((result) => {
           if (result.ok) {
             setClaimMessage({ ok: true, text: t('welfare.claimOk') })
-            // 领取成功后刷新一次，让列表上的「可领取」变成「今日已领」，
+            // 领取成功后刷新一次，让列表状态反映领取结果，
             // 同时把积分读数一起更新（同一个 status 响应里）。
             load(false)
           } else {
@@ -802,6 +751,7 @@ export const CodeArtsCard = ({ t }: CodeArtsCardProps): React.ReactElement => {
             aria-selected={tab === entry.id}
             onClick={() => {
               setTab(entry.id)
+              if (entry.id === 'welfare' && tab !== 'welfare') load(false)
             }}
           >
             {entry.label}
@@ -826,6 +776,11 @@ export const CodeArtsCard = ({ t }: CodeArtsCardProps): React.ReactElement => {
           t={t}
           onRefresh={() => {
             load(true)
+          }}
+          onSettingsSaved={(settings) => {
+            setStatus((current) => current === undefined ? current : { ...current, settings })
+            window.dispatchEvent(new Event(CODEARTS_SETTINGS_CHANGED))
+            load(false)
           }}
         />
       )}

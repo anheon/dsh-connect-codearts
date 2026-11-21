@@ -77,9 +77,9 @@ export interface ModelPricing {
 }
 
 export interface CreditInfo {
-  readonly total: number
-  readonly used: number
-  readonly remain: number
+  readonly total?: number
+  readonly used?: number
+  readonly remain?: number
   readonly expiringAmount?: number
   readonly basic?: number
   readonly bonus?: number
@@ -400,10 +400,13 @@ export class CodeArtsUpstreamClient {
       return typeof value === 'number' && Number.isFinite(value) ? value : undefined
     }
 
+    const amount = readNumberField(total, 'package_credit_amount')
+    const used = readNumberField(total, 'package_credit_used')
+    const remain = readNumberField(total, 'package_credit_remain')
     const info: { -readonly [K in keyof CreditInfo]: CreditInfo[K] } = {
-      total: readNumberField(total, 'package_credit_amount') ?? 0,
-      used: readNumberField(total, 'package_credit_used') ?? 0,
-      remain: readNumberField(total, 'package_credit_remain') ?? 0,
+      ...(amount === undefined ? {} : { total: amount }),
+      ...(used === undefined ? {} : { used }),
+      ...(remain === undefined ? {} : { remain }),
     }
     const expiring = readNumberField(total, 'package_credit_expiring_amount')
     if (expiring !== undefined) info.expiringAmount = expiring
@@ -441,8 +444,13 @@ export class CodeArtsUpstreamClient {
       agentType: 'PromptCenter',
       ...(signal === undefined ? {} : { signal }),
     })
-    const data = readRecord(payload, 'data')
-    const items = readArray(data, 'items')
+    const record = asRecord(payload)
+    const code = record?.['code']
+    if (record?.['error_code'] || record?.['error'] || (code !== undefined && code !== null && code !== 0 && code !== '0')) {
+      throw requestError(classifyError(200, JSON.stringify(payload)))
+    }
+    const items = readRecord(record, 'data')?.['items']
+    if (!Array.isArray(items)) throw new Error('码道福利响应缺少 items 数组。')
     const result: WelfareItem[] = []
     for (const raw of items) {
       const record = asRecord(raw)

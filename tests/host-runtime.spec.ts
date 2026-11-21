@@ -6,9 +6,10 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resolveCodeArtsHome } from '../src/credentials.ts'
-import { apply } from '../src/index.ts'
+import { apply, Config } from '../src/index.ts'
 import { loadLocalState, localStatePath, saveLocalState } from '../src/local-state.ts'
-import { CODEARTS_WRITE_REQUEST_HEADER } from '../src/protocol/types.ts'
+import { CODEARTS_SETTINGS_PATH, CODEARTS_WRITE_REQUEST_HEADER } from '../src/protocol/types.ts'
+import type { QuickSettings } from '../src/protocol/types.ts'
 import { CodeArtsUpstreamClient } from '../src/upstream.ts'
 import { CODEARTS_PREFERENCES_PATH } from '../src/web-status.ts'
 
@@ -47,8 +48,20 @@ afterEach(async () => {
   await rmdir(stateHome)
 })
 
-const boot = (autoCheckin: boolean) => {
+const boot = (autoCheckin: boolean, live?: { revision: number; values: QuickSettings }) => {
   const routes = new Map<string, Handler>()
+  let onSettingsUpdated: ((namespace: string) => void) | undefined
+  const mutate = vi.fn(async (
+    namespace: string,
+    ops: ReadonlyArray<{ path: readonly string[]; value: unknown }>,
+    revision: number,
+  ) => {
+    if (live === undefined) throw new Error('Missing live settings')
+    if (revision !== live.revision) throw Object.assign(new Error('conflict'), { code: 'SETTINGS_CONFLICT' })
+    live.values = Object.fromEntries(ops.map(({ path, value }) => [path[0], value])) as unknown as QuickSettings
+    live.revision += 1
+    onSettingsUpdated?.(namespace)
+  })
   let poll: (() => void) | undefined
   let discover: Discover | undefined
   const nativeInterval = globalThis.setInterval
@@ -60,6 +73,11 @@ const boot = (autoCheckin: boolean) => {
   const effect = (register: () => () => void) => { disposers.push(register()) }
   const ctx = {
     effect,
+    on(_event: string, callback: (namespace: string) => void) { onSettingsUpdated = callback },
+    settings: live === undefined ? undefined : {
+      describe: () => [{ ns: 'dsh-connect-codearts', revision: live.revision }],
+      mutate,
+    },
     inject(_services: string[], register: (webCtx: object) => void) {
       register({
         effect,
@@ -79,9 +97,16 @@ const boot = (autoCheckin: boolean) => {
       registerModelDiscovery(_namespace: string, handler: Discover) { discover = handler },
     },
   }
-  apply(ctx as never, { autoCheckin })
+  apply(ctx as never, {
+    autoCheckin,
+    ...(live === undefined ? {} : {
+      showCredits: { get: () => live.values.showCredits },
+      pollIntervalMs: { get: () => live.values.pollIntervalMs },
+      defaultEfforts: { get: () => live.values.defaultEfforts },
+    }),
+  })
   if (poll === undefined || discover === undefined) throw new Error('Plugin registration incomplete')
-  return { routes, poll, discover }
+  return { routes, poll, discover, mutate }
 }
 
 const requestPreferences = async (handler: Handler, patch: unknown) => {
@@ -109,6 +134,32 @@ const requestPreferences = async (handler: Handler, patch: unknown) => {
 }
 
 describe('plugin runtime', () => {
+  it('writes quick settings through the host and reschedules polling without a restart', async () => {
+    const list = vi.spyOn(CodeArtsUpstreamClient.prototype, 'listModels').mockResolvedValue([model])
+    const live = {
+      revision: 4,
+      values: { showCredits: true, pollIntervalMs: 300_000, defaultEfforts: { obsolete: 'high' } } as QuickSettings,
+    }
+    const host = boot(false, live)
+    await vi.waitFor(() => expect(list).toHaveBeenCalled())
+    const route = host.routes.get(CODEARTS_SETTINGS_PATH)
+    if (!route) throw new Error('Quick settings route missing')
+
+    const changes = { showCredits: false, pollIntervalMs: 60_000, defaultEfforts: {} }
+    expect(await requestPreferences(route, { ...changes, revision: 3 })).toMatchObject({ status: 409 })
+    expect(live.values.showCredits).toBe(true)
+    expect(await requestPreferences(route, { ...changes, revision: 4, pollIntervalMs: 2500 })).toMatchObject({ status: 400 })
+    expect(host.mutate).toHaveBeenCalledTimes(1)
+
+    const result = await requestPreferences(route, { ...changes, revision: 4 })
+    expect(result).toMatchObject({ status: 200, body: { ok: true, settings: { ...changes, revision: 5 } } })
+    expect(live.values.defaultEfforts).toEqual({})
+    expect(setInterval).toHaveBeenLastCalledWith(expect.any(Function), 60_000)
+    for (const key of ['showCredits', 'pollIntervalMs', 'defaultEfforts']) {
+      expect(Config.dict?.[key]?.meta.volatile).toBe(true)
+    }
+  })
+
   it('uses the user home when DSH_HOME is absent or blank', () => {
     vi.stubEnv('DSH_HOME', undefined)
     expect(resolveCodeArtsHome()).toBe(join(homedir(), '.dsh'))

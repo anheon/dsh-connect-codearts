@@ -6,15 +6,7 @@
  *   - `autoCheckin`：在签到页保存的开关
  *   - `lastCheckin`：上一次自动签到成功的本地日期与金额
  *
- * **为什么不写进 Config**：这两项都要从浏览器改。本机 DSH 0.2.2-rc.3 的
- * 客户端服务只有 `layout`/`locale`/`sessions`/`slots`/`theme`/`timer`/
- * `uiWorkspace`/`workspaces` 八个，**没有 `configForms`** —— 也就是说客户端
- * 没有写宿主 Config 的通道。参考实现 dsh-connect-workbuddy 用的是
- * `softGet('configForms')`，在不提供该服务的宿主上它会退化成只读。
- *
- * 所以这里走和 `credentials.ts` 一样的路：插件自己落一个文件，客户端通过
- * 本插件的 POST 路由改。代价是这些选择不随 profile 的 patch 走，好处是
- * **在一个已经确定没有 configForms 的宿主上是唯一能真正保存的做法**。
+ * 模型可见性、签到开关与签到记录沿用本机偏好文件。账号页的快捷配置由宿主保存到 profile。
  *
  * 写入用「先写临时文件再改名」：中途崩掉不会留下半个 JSON 把插件卡死。
  *

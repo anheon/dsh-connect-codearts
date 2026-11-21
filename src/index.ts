@@ -32,15 +32,16 @@ import {
 import type { LocalState } from './local-state.ts'
 import type { CodeArtsCredentialKey } from './credentials.ts'
 import type { CodeArtsCredentials } from './protocol/sign.ts'
-import { CODEARTS_GATEWAY, CODEARTS_THINKING_VARIANTS_PATH } from './protocol/types.ts'
+import { CODEARTS_GATEWAY, CODEARTS_POLL_INTERVALS_MS, CODEARTS_THINKING_VARIANTS_PATH } from './protocol/types.ts'
 import type { AccountInfo, CreditInfo, ModelCatalogEntry, WelfareItem } from './upstream.ts'
 import { CodeArtsUpstreamClient } from './upstream.ts'
 import {
   registerPreferencesRoute,
+  registerSettingsRoute,
   registerStatusRoute,
   registerWelfareClaimRoute,
 } from './web-status.ts'
-import type { PreferencesPatch, PreferencesSnapshot } from './protocol/types.ts'
+import type { PreferencesPatch, PreferencesSnapshot, SettingsSnapshot } from './protocol/types.ts'
 import type { WelfareSnapshot } from './web-status.ts'
 
 /** 插件在 profile 里的 entry id。宿主用它做设置命名空间。 */
@@ -79,11 +80,16 @@ export const settingsNamespaceOf = (ctx: unknown): SettingsNamespace => {
   return (typeof id === 'string' && id !== '' ? id : name) as SettingsNamespace
 }
 
-/** 目录缓存刷新间隔的五个档位（毫秒）。 */
-const POLL_INTERVALS_MS = [60_000, 5 * 60_000, 10 * 60_000, 30 * 60_000, 60 * 60_000] as const
+/** DSH 的 volatile 配置是实时引用；直接调用插件入口时也接受普通配置。 */
+type Setting<T> = T | { get(): T }
+
+const readSetting = <T>(setting: Setting<T> | undefined): T | undefined =>
+  typeof setting === 'object' && setting !== null && 'get' in setting && typeof setting.get === 'function'
+    ? setting.get()
+    : setting as T | undefined
 
 /** 默认 5 分钟。码道的模型目录与积分都不需要秒级新鲜度。 */
-const DEFAULT_POLL_INTERVAL_MS = 5 * 60_000
+const DEFAULT_POLL_INTERVAL_MS = 300_000
 
 /**
  * 插件配置。
@@ -98,13 +104,13 @@ export interface Config {
   /** 关掉整个 provider（不注册 adapter）。默认开。 */
   enabled?: boolean
   /** 目录与积分的自动刷新间隔。 */
-  pollIntervalMs?: number
+  pollIntervalMs?: Setting<number>
   /** 用户可覆盖网关地址（企业内网代理场景）。只接受 https。 */
   gateway?: string
   /** 每个模型默认的思考档位，键是 model id。 */
-  defaultEfforts?: Record<string, string>
+  defaultEfforts?: Setting<Readonly<Record<string, string>>>
   /** 是否在输入框显示积分胶囊。 */
-  showCredits?: boolean
+  showCredits?: Setting<boolean>
   /**
    * 每日自动签到。
    *
@@ -114,12 +120,13 @@ export interface Config {
   autoCheckin?: boolean
 }
 
-export const Config: z<Config> = z.object({
+export const Config = z.object({
   enabled: z.boolean().default(true).description('启用码道 CodeArts provider。'),
   pollIntervalMs: z
-    .union(POLL_INTERVALS_MS.map((ms) => z.const(ms)))
+    .union(CODEARTS_POLL_INTERVALS_MS.map((ms) => z.const(ms)))
     .default(DEFAULT_POLL_INTERVAL_MS)
-    .description('模型目录与积分的自动刷新间隔。'),
+    .description('模型目录与积分的自动刷新间隔。')
+    .volatile(),
   gateway: z
     .string()
     .default('')
@@ -127,8 +134,9 @@ export const Config: z<Config> = z.object({
   defaultEfforts: z
     .dict(z.string())
     .default({})
-    .description('每个模型默认的思考档位，键是模型 id，值是档位名。'),
-  showCredits: z.boolean().default(true).description('在输入框旁显示积分读数。'),
+    .description('每个模型默认的思考档位，键是模型 id，值是档位名。')
+    .volatile(),
+  showCredits: z.boolean().default(true).description('在输入框旁显示积分读数。').volatile(),
   autoCheckin: z.boolean().default(true).description('自动签到的初始值，签到页保存的开关优先。'),
 })
 
@@ -210,7 +218,21 @@ export function apply(ctx: Context, config: Config): void {
   let pendingCheckin: LocalState['lastCheckin']
 
   const defaultEfforts = (): ReadonlyMap<string, string> =>
-    new Map(Object.entries(config.defaultEfforts ?? {}))
+    new Map(Object.entries(readSetting(config.defaultEfforts) ?? {}))
+
+  const pollInterval = (): number => readSetting(config.pollIntervalMs) ?? DEFAULT_POLL_INTERVAL_MS
+
+  const settingsSnapshot = (): SettingsSnapshot => {
+    const descriptor = ctx.settings?.describe({ redactSecrets: true }).find((row) => row.ns === settingsNs)
+    return {
+      enabled: config.enabled !== false,
+      showCredits: readSetting(config.showCredits) !== false,
+      pollIntervalMs: pollInterval(),
+      gateway: config.gateway ?? '',
+      defaultEfforts: { ...readSetting(config.defaultEfforts) },
+      ...(descriptor === undefined || typeof ctx.settings?.mutate !== 'function' ? {} : { revision: descriptor.revision }),
+    }
+  }
 
   /** 按来源优先级读取凭据，合并同一时间的探测。 */
   const ensureCredential = async (reload = false): Promise<CodeArtsCredentialKey | undefined> => {
@@ -443,8 +465,18 @@ export function apply(ctx: Context, config: Config): void {
       }
     }
 
-    const timer = setInterval(() => void poll(), config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS)
+    let interval = pollInterval()
+    let timer = setInterval(() => void poll(), interval)
     timer.unref?.()
+    ctx.on?.('settings/document-updated', (ns) => {
+      if (ns !== settingsNs || stopped) return
+      const next = pollInterval()
+      if (next === interval) return
+      clearInterval(timer)
+      interval = next
+      timer = setInterval(() => void poll(), interval)
+      timer.unref?.()
+    })
     void poll()
     return () => {
       stopped = true
@@ -547,20 +579,7 @@ export function apply(ctx: Context, config: Config): void {
       refresh: async () => {
         await refresh(true)
       },
-      /**
-       * 配置的生效值。
-       *
-       * 现读 `config`（闭包引用，宿主改配置时对象会被替换，所以每次调用都
-       * 读最新的那个）。`showCredits` 以前没有任何消费者 —— 配置里关掉胶囊
-       * 也不生效，报出来之后客户端才有判据。
-       */
-      settings: () => ({
-        enabled: config.enabled !== false,
-        showCredits: config.showCredits !== false,
-        pollIntervalMs: config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
-        gateway: config.gateway ?? '',
-        defaultEfforts: { ...(config.defaultEfforts ?? {}) },
-      }),
+      settings: settingsSnapshot,
       welfare: () => loadWelfare(),
       /**
        * 本机偏好（模型隐藏 + 签到记录）。
@@ -646,6 +665,21 @@ export function apply(ctx: Context, config: Config): void {
      * 单独一条路由而不是并进 claim：两者语义无关（一个是动积分、一个是动
      * 界面可见性），合成一条会让任何一边的校验规则污染另一边。
      */
+    if (typeof ctx.settings?.mutate === 'function') {
+      const disposeSettings = registerSettingsRoute(webCtx, {
+        ...authorization,
+        save: async (values, revision) => {
+          await ctx.settings.mutate(settingsNs, [
+            { op: 'set', path: ['showCredits'], value: values.showCredits },
+            { op: 'set', path: ['pollIntervalMs'], value: values.pollIntervalMs },
+            { op: 'set', path: ['defaultEfforts'], value: values.defaultEfforts },
+          ], revision)
+          return settingsSnapshot()
+        },
+      })
+      webCtx.effect(() => disposeSettings, `${name}: settings route`)
+    }
+
     const disposePreferences = registerPreferencesRoute(webCtx, {
       ...authorization,
       savePreferences: persistPreferences,
@@ -660,7 +694,7 @@ export function apply(ctx: Context, config: Config): void {
 
 /** 供 `bin.ts` 与测试复用的内部快照。 */
 export const internals = {
-  POLL_INTERVALS_MS,
+  POLL_INTERVALS_MS: CODEARTS_POLL_INTERVALS_MS,
   DEFAULT_POLL_INTERVAL_MS,
   CODEARTS_THINKING_VARIANTS_PATH,
   emptyCache,
