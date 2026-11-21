@@ -27,6 +27,25 @@ export const CODEARTS_DEFAULT_MAX_OUTPUT = 32_768
 /** 标记经 DSH 桌面端转发的同源写请求。 */
 export const CODEARTS_WRITE_REQUEST_HEADER = 'x-dsh-codearts-request'
 
+/** 快捷设置只写宿主声明允许热更的字段。 */
+export const CODEARTS_POLL_INTERVALS_MS = [60_000, 300_000, 600_000, 1_800_000, 3_600_000] as const
+export const CODEARTS_SETTINGS_PATH = '/plugins/dsh-connect-codearts/settings'
+export const CODEARTS_SETTINGS_CHANGED = 'dsh-codearts-settings-changed'
+
+export interface QuickSettings {
+  readonly showCredits: boolean
+  readonly pollIntervalMs: number
+  readonly defaultEfforts: Readonly<Record<string, string>>
+}
+
+export interface SettingsSnapshot extends QuickSettings {
+  readonly enabled: boolean
+  /** 自定义网关地址，空串表示官方地址。 */
+  readonly gateway: string
+  /** 缺席表示宿主无法从本面板保存设置。 */
+  readonly revision?: number
+}
+
 /** 界面上可见的偏好快照。 */
 export interface PreferencesSnapshot {
   /** 用户在模型页签里勾掉的模型 id。 */

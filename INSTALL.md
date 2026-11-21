@@ -15,7 +15,7 @@ dsh plugin --profile desktop add dsh-connect-codearts
 安装本地发布包时，在包含包的目录执行以下命令。
 
 ```sh
-dsh plugin --profile desktop add ./dsh-connect-codearts-0.1.4.tgz
+dsh plugin --profile desktop add ./dsh-connect-codearts-0.1.5.tgz
 ```
 
 ## 配置凭据
