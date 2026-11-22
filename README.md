@@ -2,6 +2,12 @@
 
 将华为云码道 CodeArts Doer 接入 DeepSeek Harness（DSH）的第三方插件。使用一组华为云 IAM AK/SK 连接码道网关，在 DSH 的模型选择器里提供 `codearts` 模型。
 
+[**下载最新版（GitHub）**](https://github.com/anheon/dsh-connect-codearts/releases/latest) · [直接下载 v0.1.5 安装包](https://github.com/anheon/dsh-connect-codearts/releases/download/v0.1.5/dsh-connect-codearts-0.1.5.tgz) · [安装指南](INSTALL.md)
+
+![DSH 对话区的码道模型选择器和积分余额](docs/screenshots/model-picker.jpg)
+
+*界面截图使用示例账号数据。*
+
 ## 安装
 
 在 DSH 桌面端的「设置 → 插件管理 → 添加插件」中输入 `dsh-connect-codearts`。也可以离线选择下载的 `.tgz` 文件。DSH 插件和独立 CLI 的安装步骤见 [安装指南](INSTALL.md)。
@@ -17,6 +23,12 @@
 支持目录刷新、模型显隐、流式回复、并行工具调用，以及向支持视觉的模型发送图片。积分余额显示在设置页和使用码道模型时的输入框旁。
 
 自动签到默认开启。可在「设置 → 码道 CodeArts → 签到」切换开关，设置会保存在本机。关闭后仍可手动领取。签到页首次保存前，插件使用 profile 中的 `autoCheckin` 作为初始值。
+
+### 界面预览
+
+| 积分与快捷设置 | 签到与福利 |
+| --- | --- |
+| ![可用积分、统计总额、已用、到期积分及快捷设置](docs/screenshots/credits-and-settings.jpg) | ![每日签到状态和新用户注册奖励](docs/screenshots/check-in-and-rewards.jpg) |
 
 ## 开发与诊断
 
