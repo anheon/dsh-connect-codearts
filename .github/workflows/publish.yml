@@ -59,7 +59,7 @@ jobs:
           PACKAGE_NAME: ${{ steps.plan.outputs.package_name }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          node --test .github/release.test.mjs
+          node --test .github/release-checks.mjs
           switch ($env:PACKAGE_NAME) {
             'dsh-sift-kb' {
               node --check index.js
