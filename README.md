@@ -2,7 +2,7 @@
 
 将华为云码道 CodeArts Doer 接入 DeepSeek Harness（DSH）的第三方插件。使用一组华为云 IAM AK/SK 连接码道网关，在 DSH 的模型选择器里提供 `codearts` 模型。
 
-[**下载最新版（GitHub）**](https://github.com/anheon/dsh-connect-codearts/releases/latest) · [直接下载 v0.1.5 安装包](https://github.com/anheon/dsh-connect-codearts/releases/download/v0.1.5/dsh-connect-codearts-0.1.5.tgz) · [安装指南](INSTALL.md)
+[**下载最新版（GitHub）**](https://github.com/anheon/dsh-connect-codearts/releases/latest) · [安装指南](INSTALL.md)
 
 ![DSH 对话区的码道模型选择器和积分余额](docs/screenshots/model-picker.jpg)
 
