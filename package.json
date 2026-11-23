@@ -2,7 +2,7 @@
   "name": "dsh-connect-codearts",
   "displayName": "DSH Connect 码道",
   "description": "把华为云码道（CodeArts Doer）的模型接入 DeepSeek Harness：用 IAM 长期 AK/SK 直连网关，请求走华为云 APIG 的 SDK-HMAC-SHA256 签名，不需要桌面客户端、不走 OAuth、不做 token 刷新。实时读取模型目录（带真实上下文窗口与输出上限）、每个模型的积分倍率、积分余额与每日签到活动。",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "license": "MIT",
   "keywords": [
     "dsh-plugin",

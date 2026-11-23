@@ -27,7 +27,7 @@ import type {
   ToolCallId,
   ToolSchema,
 } from '@deepseek-ai/dsh-llm'
-import { LlmAdapter, LlmError, ReasoningEffortId as brandEffort } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, LlmError, offloadedImageText, ReasoningEffortId as brandEffort } from '@deepseek-ai/dsh-llm'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 
 import { buildUpstreamBody, clampMaxTokens, normalizeContent, upstreamRole } from './protocol/body.ts'
@@ -167,8 +167,10 @@ const plainTextOf = (content: unknown): string => {
 const toUpstreamMessages = async (
   options: GenerateOptions,
   resolveImage: ((ref: ImageAttachmentRef) => Promise<string | undefined>) | undefined,
-): Promise<UpstreamMessage[]> => {
+): Promise<{ messages: UpstreamMessage[]; previewMessageIndexes: number[] }> => {
   const result: UpstreamMessage[] = []
+  const previewMessageIndexes: number[] = []
+  let lastAssistantIndex = -1
 
   if (options.system !== undefined && options.system !== '') {
     result.push({ role: 'system', content: options.system })
@@ -204,6 +206,10 @@ const toUpstreamMessages = async (
             // 思考内容不回传：网关对 assistant 的 reasoning 字段会报错。
             break
           case 'image': {
+            if (block.offloaded === true) {
+              parts.push({ type: 'text', text: offloadedImageText(block.attachment) })
+              break
+            }
             if (resolveImage === undefined) break
             /**
              * 传的是整个 `ImageAttachmentRef` 而不是它的 `attachmentId`：
@@ -228,6 +234,12 @@ const toUpstreamMessages = async (
       }
     }
 
+    // PTC injects its render previews as user-role messages with a distinct
+    // source. Original attachments and one-shot inputs keep their byte budget.
+    if (role === 'user' && String(message.source?.kind) === 'ptc-mode' && parts.some(part => part.type === 'image_url')) {
+      previewMessageIndexes.push(result.length)
+    }
+    if (role === 'assistant') lastAssistantIndex = result.length
     result.push({
       role: role as UpstreamMessage['role'],
       content: normalizeContent(parts),
@@ -235,7 +247,8 @@ const toUpstreamMessages = async (
     })
   }
 
-  return result
+  // Keep all previews produced by the latest tool step for the next model call.
+  return { messages: result, previewMessageIndexes: previewMessageIndexes.filter(index => index < lastAssistantIndex) }
 }
 
 /** 宿主的工具声明 → 上游 `tools` 字段。形状几乎一致，只做外层包裹。 */
@@ -376,7 +389,7 @@ export class CodeArtsAdapter extends LlmAdapter {
       )
     }
 
-    const messages = await toUpstreamMessages(options, this.#options.resolveImage)
+    const { messages, previewMessageIndexes } = await toUpstreamMessages(options, this.#options.resolveImage)
 
     /**
      * 档位归一。
@@ -421,6 +434,7 @@ export class CodeArtsAdapter extends LlmAdapter {
     let finishRaw: string | null | undefined
 
     const stream = this.#options.client.chatStream(credentials, body, {
+      previewMessageIndexes,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
 
@@ -518,6 +532,7 @@ export class CodeArtsAdapter extends LlmAdapter {
       throw LlmError.fromFailure({
         message: outcome.error.hint,
         code: outcome.error.code,
+        ...(outcome.status === undefined ? {} : { status: outcome.status }),
         ...(outcome.error.retryAfterMs === undefined
           ? {}
           : { providerRetryAfterMs: outcome.error.retryAfterMs }),

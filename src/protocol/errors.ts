@@ -265,25 +265,25 @@ export const classifyError = (status: number, text: string): ClassifiedError => 
 
   // 6. 请求参数问题。`Message role cannot empty` 是本项目实测到的 developer 角色报错。
   if (
-    status === 400 ||
+    status === 400 || status === 413 ||
     matches(haystack, /InferHub\.001001|InferHub\.001001044|参数无效|invalid.*param|Message role cannot/i)
   ) {
     const isRoleIssue = matches(haystack, /Message role cannot/i)
-    const isMaxTokens = matches(haystack, /max_tokens|max output|token.*exceed/i)
+    const isMaxTokens = matches(haystack, /max_(?:completion_)?tokens|max(?:imum)? output|output tokens?|输出\s*(?:token|令牌)/i)
     return {
       kind: 'bad_request',
       code: detail.code || `HTTP_${status}`,
       message: detail.message,
       retryable: false,
-      hint: isRoleIssue
+      hint: status === 413
+        ? '码道网关拒绝了过大的请求体。请压缩上下文或减少图片。'
+        : isRoleIssue
         ? '请求里的消息角色不被网关接受。DSH 用 developer 角色承载系统提示，\n' +
           '而码道网关只认 system/user/assistant/tool —— 插件会自动把 developer 改写成\n' +
           'system，若仍出现这条错误请把它报成 issue。'
         : isMaxTokens
-          ? '输出 token 上限被网关拒绝。插件已按实测天花板夹到 131072，\n' +
-            '若仍复现说明上限随账号套餐变化，把「最大输出」调小后重试。'
-          : '请求参数被拒绝。多数情况是输出 token 超过该模型上限，\n' +
-            '把「最大输出」调小后重试；若持续失败请把这条错误报到 issue。',
+          ? '输出 token 上限被网关拒绝。请调小「最大输出」后重试。'
+          : '码道网关拒绝了请求参数。',
     }
   }
 
