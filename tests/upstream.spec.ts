@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { buildUpstreamBody } from '../src/protocol/body.ts'
+import { buildUpstreamBody, CODEARTS_MAX_CHAT_BODY_BYTES } from '../src/protocol/body.ts'
 import { CodeArtsUpstreamClient } from '../src/upstream.ts'
 
 const credentials = { accessKey: 'fixture-ak', secretKey: 'fixture-sk' }
@@ -29,6 +29,42 @@ describe('gateway and catalog', () => {
 })
 
 describe('upstream stream termination', () => {
+  it('reports an unshrinkable UTF-8 body before contacting the gateway', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+    const client = new CodeArtsUpstreamClient({ fetchImpl })
+    const oversized = buildUpstreamBody({ model: 'sample', messages: [
+      { role: 'user', content: '中'.repeat(Math.ceil(CODEARTS_MAX_CHAT_BODY_BYTES / 3)) },
+    ] })
+    const bytes = Buffer.byteLength(JSON.stringify(oversized))
+    const failure = await client.chatStream(credentials, oversized).next()
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(failure).toMatchObject({
+      done: true,
+      value: { ok: false, error: { code: 'CODEARTS_REQUEST_BODY_TOO_LARGE', hint: expect.stringContaining(String(bytes)) } },
+    })
+  })
+
+  it.each([400, 200])('retains safe parameter diagnostics from HTTP %s', async (status) => {
+    const payload = { error_code: 'InferHub.001001005.400', error_msg: 'The request param is invalid' }
+    const client = new CodeArtsUpstreamClient({
+      fetchImpl: async () => status === 200
+        ? new Response(`data: ${JSON.stringify(payload)}\n\n`)
+        : Response.json(payload, { status }),
+    })
+    const response = await client.chatStream(credentials, body).next()
+    expect(response).toMatchObject({
+      done: true,
+      value: {
+        ok: false,
+        ...(status === 400 ? { status } : {}),
+        error: {
+          code: payload.error_code,
+          hint: expect.stringContaining(`请求体：${Buffer.byteLength(JSON.stringify(body))} 字节。 网关详情：${payload.error_msg}`),
+        },
+      },
+    })
+  })
+
   it('parses split CRLF frames and cancels an open body at [DONE]', async () => {
     const cancel = vi.fn()
     const text = [textFrame, finishFrame, 'data: [DONE]', ''].join('\r\n\r\n')

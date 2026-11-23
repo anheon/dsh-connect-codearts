@@ -19,6 +19,7 @@
  */
 import { CodeArtsCard } from './CodeArtsCard.tsx'
 import { CreditsGate } from './credits-gate.tsx'
+import type { ModelDirectoryStore } from './credits-gate.tsx'
 import { CODEARTS_LOCALE_NS, dictionaries } from './locales.ts'
 import { ensureStyles } from './styles.ts'
 
@@ -40,8 +41,14 @@ const SETTINGS_SECTION_ORDER = 62
 const COMPOSER_CHIP_ID = 'dsh-connect-codearts-credits'
 const COMPOSER_CHIP_ORDER = 6
 
+interface ModelDirectories {
+  directoryFor(sessionId: string): { readonly store: ModelDirectoryStore }
+}
+
 /** 最小可用的宿主上下文形状。全部用可选字段，缺失时降级而不是崩。 */
 interface ClientContext {
+  inject?(services: string[], callback: (scope: ClientContext) => void): unknown
+  get?(name: 'modelDirectories'): ModelDirectories | undefined
   locale?: {
     register(ns: string, dicts: Record<string, Record<string, string>>): () => void
     bind(ns: string): (key: string, params?: Record<string, string | number>) => string
@@ -78,8 +85,6 @@ export const apply = (ctx: ClientContext): void => {
       return
     }
 
-    let registered = 0
-
     /**
      * `settings.section`：设置页左侧导航的一项 + 内容区。
      *
@@ -87,7 +92,6 @@ export const apply = (ctx: ClientContext): void => {
      * 前者会等宿主把该槽位挂好再执行回调，后者在宿主还没准备好时会静默丢掉。
      */
     slots.inject('settings.section', () => {
-      registered += 1
       return slots.register(
         {
           // `name` 是「往哪个槽位注册」，不是可选的装饰字段。漏了它宿主拿不到
@@ -105,33 +109,25 @@ export const apply = (ctx: ClientContext): void => {
       )
     })
 
-    /**
-     * `conversation.input.right`：输入框右侧的积分胶囊。
-     *
-     * **无条件注册、由 `CreditsGate` 自己决定渲不渲染**，而不是「只在码道
-     * 模型下才注册」。理由是槽位注册与当前会话模型无关 —— 注册时读不到
-     * `modelSelection`，而模型是每次切换都可能变的。真要在外面判，就得在模型
-     * 变化时反复 dispose/register，那会在切换瞬间闪一下、也更容易漏。
-     *
-     * 这个 bug 是 GUI 验证时用户报的：用 DeepSeek 模型时码道积分也挂在旁边。
-     */
-    slots.inject('conversation.input.right', () => {
-      registered += 1
-      return slots.register(
+    // The composer can start before model selection is loaded. Wait for its
+    // directory service independently so settings can register immediately.
+    ctx.inject?.(['slots', 'modelDirectories'], (scope) => {
+      const models = scope.get?.('modelDirectories')
+      const composerSlots = scope.slots
+      if (models === undefined || composerSlots === undefined) return
+      composerSlots.inject('conversation.input.right', () => composerSlots.register(
         {
           name: 'conversation.input.right',
           id: COMPOSER_CHIP_ID,
           order: COMPOSER_CHIP_ORDER,
           locale: CODEARTS_LOCALE_NS,
-          inject: () => ({ t }),
+          inject: (sessionId: string) => ({ t, directory: models.directoryFor(sessionId).store }),
         },
         CreditsGate,
-      )
+      ))
     })
 
-    console.info(
-      `[dsh-connect-codearts] 客户端已挂载，注册了 ${registered} 个槽位（设置页 + 积分胶囊）`,
-    )
+    console.info('[dsh-connect-codearts] 客户端已挂载')
   } catch (error) {
     console.error(
       '[dsh-connect-codearts] 客户端卡片加载失败（宿主侧 provider 不受影响）：',

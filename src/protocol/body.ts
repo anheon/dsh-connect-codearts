@@ -53,6 +53,49 @@ export interface UpstreamChatBody {
   reasoning_effort?: string
 }
 
+/** Conservative route budget below the request sizes rejected by the gateway. */
+export const CODEARTS_MAX_CHAT_BODY_BYTES = 10_000_000
+
+const OMITTED_PREVIEW_TEXT = '[Earlier tool preview images omitted to fit the CodeArts request size limit.]'
+
+export type SerializedChatBody =
+  | { readonly ok: true; readonly text: string; readonly bytes: number }
+  | { readonly ok: false; readonly bytes: number }
+
+/**
+ * Enforce the UTF-8 JSON body budget before signing. Remove earlier PTC previews
+ * first, keeping their accompanying text and leaving user attachments intact.
+ */
+export const serializeChatBody = (
+  body: UpstreamChatBody,
+  previewMessageIndexes: readonly number[],
+  limit = CODEARTS_MAX_CHAT_BODY_BYTES,
+): SerializedChatBody => {
+  const original = JSON.stringify(body)
+  let bytes = Buffer.byteLength(original)
+  if (bytes <= limit) return { ok: true, text: original, bytes }
+
+  const messages = [...body.messages]
+  for (const index of previewMessageIndexes) {
+    const message = messages[index]
+    if (message === undefined || typeof message.content === 'string') continue
+    const text = message.content.filter(part => part.type === 'text')
+    if (text.length === message.content.length) continue
+
+    const replacement = {
+      ...message,
+      content: normalizeContent([...text, { type: 'text', text: OMITTED_PREVIEW_TEXT }]),
+    }
+    bytes += Buffer.byteLength(JSON.stringify(replacement)) - Buffer.byteLength(JSON.stringify(message))
+    messages[index] = replacement
+    if (bytes <= limit) {
+      return { ok: true, text: JSON.stringify({ ...body, messages }), bytes }
+    }
+  }
+
+  return { ok: false, bytes }
+}
+
 /**
  * 调用方交进来的消息形状。
  *

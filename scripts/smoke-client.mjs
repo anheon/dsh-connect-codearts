@@ -47,6 +47,7 @@ const reactStub = {
   useCallback: (fn) => fn,
   useMemo: (fn) => fn(),
   useRef: (value) => ({ current: value }),
+  useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
 }
 const jsxRuntimeStub = {
   jsx: reactStub.createElement,
@@ -112,9 +113,28 @@ const makeContext = () => {
     setLocale: () => {},
   }
 
-  // 客户端只 inject ['slots','locale']，其它服务一律不提供 —— 这样能验证
-  // 「插件真的只依赖这两个」。若代码偷偷用了第三个服务，这里会 undefined 炸。
-  return { slots, locale }
+  let mountComposer
+  const directory = {
+    subscribe: () => () => {},
+    getSnapshot: () => ({ current: { provider: 'codearts' }, routable: true }),
+  }
+  return {
+    slots,
+    locale,
+    inject(deps, callback) {
+      check('积分胶囊等待模型目录服务', deps.includes('modelDirectories'))
+      mountComposer = () => callback({
+        slots,
+        get: (key) => key === 'modelDirectories' ? {
+          directoryFor: (id) => {
+            check('胶囊读取本会话的模型目录', id === 'fixture-session')
+            return { store: directory }
+          },
+        } : undefined,
+      })
+    },
+    mountComposer: () => mountComposer?.(),
+  }
 }
 
 // ─── 装载 lib/client.js ─────────────────────────────────────────────────────
@@ -184,6 +204,8 @@ if (typeof moduleExports?.apply === 'function') {
   )
   check('locale.bind 应被调用（拿 t）', bindCallCount > 0, `实际调用 ${bindCallCount} 次`)
 
+  check('模型目录加载前，设置页独立注册', registrations.some(({ registration }) => registration.name === 'settings.section'))
+  ctx.mountComposer()
   const slotNames = registrations.map((r) => r.registration?.name)
   check(
     '应注册 settings.section',
@@ -195,6 +217,11 @@ if (typeof moduleExports?.apply === 'function') {
     slotNames.includes('conversation.input.right'),
     `实际注册的槽位：${JSON.stringify(slotNames)}`,
   )
+  const credits = registrations.find(({ registration }) => registration.name === 'conversation.input.right')
+  if (credits !== undefined) {
+    const props = credits.registration.inject('fixture-session')
+    check('默认码道模型在首次挂载时显示积分胶囊', credits.component(props) !== null)
+  }
   check(
     '不应注册 conversation.input.model.label（该槽是 single，赢家通吃会挤掉宿主徽章）',
     !slotNames.includes('conversation.input.model.label'),

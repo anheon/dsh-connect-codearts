@@ -17,9 +17,11 @@
  * @module dsh-connect-codearts/tests/adapter
  */
 import { BlockAssembler } from '@deepseek-ai/dsh-llm'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 
 import { CodeArtsAdapter, CODEARTS_PROVIDER, finishReasonOf, reasoningInfoOf } from '../src/adapter.ts'
+import { CODEARTS_MAX_CHAT_BODY_BYTES } from '../src/protocol/body.ts'
 import { CodeArtsUpstreamClient } from '../src/upstream.ts'
 import type { ModelCatalogEntry } from '../src/upstream.ts'
 
@@ -184,6 +186,59 @@ describe('stream 无凭据时的失败方式', () => {
 })
 
 describe('stream with images and tool calls', () => {
+  it('trims only earlier PTC previews before sending a large follow-up', async () => {
+    const dataUrl = 'data:image/png;base64,' + 'a'.repeat(3_400_000)
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      new Response('data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n'),
+    )
+    const adapter = new CodeArtsAdapter({
+      client: new CodeArtsUpstreamClient({ fetchImpl }),
+      credentials: async () => ({ accessKey: 'fixture-ak', secretKey: 'fixture-sk' }),
+      catalog: () => [entry({ supportsImages: true })],
+      thinkingVariants: () => new Map(),
+      hiddenModels: () => new Set(),
+      defaultEfforts: () => new Map(),
+      resolveImage: async () => dataUrl,
+    })
+    const preview = (text: string): UserMessage => ({
+      id: text as UserMessage['id'],
+      role: 'user',
+      source: { kind: 'ptc-mode' } as unknown as UserMessage['source'],
+      content: [{ type: 'text', text }, { type: 'image', attachment: {} as never }],
+    })
+    const messages = [
+      { role: 'user' as const, content: [{ type: 'image' as const, attachment: {} as never }] },
+      preview('previous render'),
+      {
+        id: 'step' as never,
+        role: 'assistant' as const,
+        source: { kind: 'model' as const, provider: CODEARTS_PROVIDER, model: 'test-model' },
+        content: [{ type: 'tool-call' as const, id: 'call-1' as never, name: 'preview', arguments: '{}' }],
+      },
+      {
+        id: 'result' as never,
+        role: 'tool' as const,
+        source: { kind: 'tool' as const, toolName: 'preview', callId: 'call-1' as never },
+        toolCallId: 'call-1' as never,
+        content: [{ type: 'text' as const, text: 'rendered' }],
+      },
+      preview('current render'),
+    ]
+    let last
+    for await (const chunk of adapter.stream({ provider: CODEARTS_PROVIDER, model: 'test-model', messages })) {
+      last = chunk
+    }
+    expect(last).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    const request = String(fetchImpl.mock.calls[0]?.[1]?.body)
+    const sent = JSON.parse(request).messages
+    expect(Buffer.byteLength(request)).toBeLessThanOrEqual(CODEARTS_MAX_CHAT_BODY_BYTES)
+    expect(sent[0].content[0].type).toBe('image_url')
+    expect(sent[1].content).toMatch(/^previous render\n\[Earlier tool preview/)
+    expect(sent[2].tool_calls[0].id).toBe(sent[3].tool_call_id)
+    expect(sent[4].content[1].type).toBe('image_url')
+    expect(messages[1]?.content[1]).toMatchObject({ type: 'image' })
+  })
+
   it('sends the image and preserves two interleaved tools in the host assembler', async () => {
     const dataUrl = 'data:image/png;base64,dGVzdA=='
     const resolveImage = vi.fn(async () => dataUrl)

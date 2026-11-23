@@ -36,10 +36,11 @@ import {
   CODEARTS_THINKING_VARIANTS_PATH,
 } from './protocol/types.ts'
 import type { UpstreamChatBody, UpstreamMessage } from './protocol/body.ts'
+import { CODEARTS_MAX_CHAT_BODY_BYTES, serializeChatBody } from './protocol/body.ts'
 import type { ParsedChunk, SseEvent } from './protocol/sse.ts'
 import { parseChunk, parseSseEvents } from './protocol/sse.ts'
 import type { ClassifiedError } from './protocol/errors.ts'
-import { classifyBusinessRejection, classifyError, classifyTransportError } from './protocol/errors.ts'
+import { classifyBusinessRejection, classifyError, classifyTransportError, parseErrorDetail } from './protocol/errors.ts'
 
 /** 一次对话调用的结果。 */
 export interface ChatResult {
@@ -50,6 +51,7 @@ export interface ChatResult {
 export interface ChatFailure {
   readonly ok: false
   readonly error: ClassifiedError
+  readonly status?: number
 }
 
 export type ChatOutcome = ChatResult | ChatFailure
@@ -528,9 +530,16 @@ export class CodeArtsUpstreamClient {
   async *chatStream(
     credentials: CodeArtsCredentials,
     body: UpstreamChatBody,
-    options: { readonly signal?: AbortSignal | undefined } = {},
+    options: { readonly signal?: AbortSignal | undefined; readonly previewMessageIndexes?: readonly number[] } = {},
   ): AsyncGenerator<ParsedChunk, ChatOutcome, void> {
-    const bodyText = JSON.stringify(body)
+    const serialized = serializeChatBody(body, options.previewMessageIndexes ?? [])
+    if (!serialized.ok) {
+      const message = `码道请求体为 ${serialized.bytes} 字节，超过插件的 ${CODEARTS_MAX_CHAT_BODY_BYTES} 字节上限。请压缩上下文，或减少当前输入的图片。`
+      return {
+        ok: false,
+        error: { kind: 'bad_request', code: 'CODEARTS_REQUEST_BODY_TOO_LARGE', message, hint: message, retryable: false },
+      }
+    }
     const sessionId = sessionIdOf(credentials.accessKey)
 
     let response: Response
@@ -538,7 +547,7 @@ export class CodeArtsUpstreamClient {
       response = await this.#throughGate(() => this.#signedFetch({
         path: CODEARTS_CHAT_PATH,
         method: 'POST',
-        body: bodyText,
+        body: serialized.text,
         credentials,
         signHeaders: { 'Content-Type': 'application/json' },
         postHeaders: {
@@ -563,7 +572,7 @@ export class CodeArtsUpstreamClient {
 
     if (!response.ok || response.body === null) {
       const text = await response.text().catch(() => '')
-      return { ok: false, error: classifyError(response.status, text) }
+      return chatFailure(response.status, text, serialized.bytes)
     }
 
     let sawValidFrame = false
@@ -580,8 +589,9 @@ export class CodeArtsUpstreamClient {
         const parsed = parseChunk(event.payload)
         if (parsed.inlineError !== undefined) {
           const { code, message } = parsed.inlineError
-          this.#log(`upstream inline error: ${code} ${message}`)
-          return { ok: false, error: classifyError(200, JSON.stringify({ error_code: code, error_msg: message })) }
+          const failure = chatFailure(200, JSON.stringify({ error_code: code, error_msg: message }), serialized.bytes)
+          this.#log(`upstream inline error: ${failure.error.code}`)
+          return failure
         }
 
         const { delta, usage } = parsed
@@ -625,6 +635,21 @@ export class CodeArtsUpstreamClient {
 
     return { ok: true, frames: [] }
   }
+}
+
+const chatFailure = (status: number, text: string, bytes: number): ChatFailure => {
+  const error = classifyError(status, text)
+  const transportStatus = status >= 400 ? { status } : {}
+  if (error.kind !== 'bad_request') return { ok: false, error, ...transportStatus }
+
+  const detail = parseErrorDetail(text)
+  const message = detail.message.trim()
+  // Gateway HTML, multiline diagnostics and echoed payloads are not suitable
+  // for the session log. Retain short structured parameter errors.
+  const usableDetail = detail.code !== '' && message !== detail.code && message.length <= 240 &&
+    !/[\r\n<>{}]|authorization|sdk-hmac|api[-_ ]?key|secret|bearer|data:|[\w+/=.-]{40,}/i.test(message)
+  const hint = `${error.hint} 请求体：${bytes} 字节。${usableDetail && message !== '' ? ` 网关详情：${message}` : ''}`
+  return { ok: false, error: { ...error, hint }, ...transportStatus }
 }
 
 const requestError = (failure: ClassifiedError): Error =>
